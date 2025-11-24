@@ -1,0 +1,422 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum Role {
+  USER
+  ADMIN
+}
+
+enum SiteStatus {
+  DRAFT
+  GENERATING
+  DEPLOYED
+  FAILED
+  ARCHIVED
+}
+
+enum DeploymentStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum BackupStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum BackupType {
+  MANUAL
+  SCHEDULED
+}
+
+// Models
+
+model User {
+  id                     String        @id @default(uuid())
+  email                  String        @unique
+  password               String
+  firstName              String?
+  lastName               String?
+  avatar                 String?
+  role                   Role          @default(USER)
+  emailVerified          Boolean       @default(false)
+  emailVerificationToken String?
+  passwordResetToken     String?
+  passwordResetExpiry    DateTime?
+  lastLoginAt            DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  deletedAt              DateTime?
+
+  // Relations
+  sites         Site[]
+  subscription  Subscription?
+  payments      Payment[]
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+  apiKeys       ApiKey[]
+  emailLogs     EmailLog[]
+
+  @@index([email])
+  @@index([createdAt])
+}
+
+model Site {
+  id                 String     @id @default(uuid())
+  userId             String
+  name               String
+  businessType       String
+  industry           String?
+  description        String?
+  url                String?    @unique
+  wpUsername         String?
+  wpPassword         String?    // Encrypted
+  wpVersion          String?
+  themeId            String?
+  status             SiteStatus @default(DRAFT)
+  deploymentProgress Json?      // Progress tracking
+  siteMetadata       Json?      // Colors, fonts, etc.
+  hosting            Json?      // Provider, credentials
+  ssl                Boolean    @default(false)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  // Relations
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme       Theme?           @relation(fields: [themeId], references: [id])
+  deployments SiteDeployment[]
+  pages       Page[]
+  posts       Post[]
+  media       Media[]
+  backups     Backup[]
+  plugins     SitePlugin[]
+  domains     Domain[]
+  analytics   Analytics[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([url])
+  @@index([createdAt])
+}
+
+model SiteDeployment {
+  id           String           @id @default(uuid())
+  siteId       String
+  status       DeploymentStatus @default(PENDING)
+  steps        Json?            // Array of steps with status
+  logs         String?          @db.Text
+  startedAt    DateTime         @default(now())
+  completedAt  DateTime?
+  errorMessage String?
+  createdAt    DateTime         @default(now())
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+model Theme {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  thumbnail   String?
+  demoUrl     String?
+  category    String?
+  tags        String[]
+  isPremium   Boolean  @default(false)
+  price       Decimal?
+  rating      Float?
+  downloads   Int      @default(0)
+  version     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  sites Site[]
+}
+
+model Plugin {
+  id            String   @id @default(uuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  category      String?
+  isPremium     Boolean  @default(false)
+  price         Decimal?
+  required      Boolean  @default(false)
+  configuration Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  sites SitePlugin[]
+}
+
+model SitePlugin {
+  siteId    String
+  pluginId  String
+  isActive  Boolean  @default(true)
+  settings  Json?
+  createdAt DateTime @default(now())
+
+  // Relations
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@id([siteId, pluginId])
+}
+
+model Page {
+  id             String     @id @default(uuid())
+  siteId         String
+  title          String
+  slug           String
+  content        String?    @db.Text
+  template       String?
+  seoTitle       String?
+  seoDescription String?
+  focusKeyword   String?
+  status         PageStatus @default(DRAFT)
+  order          Int        @default(0)
+  parentId       String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relations
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  parent Page?  @relation("PageHierarchy", fields: [parentId], references: [id])
+  children Page[] @relation("PageHierarchy")
+
+  @@unique([siteId, slug])
+  @@index([siteId])
+  @@index([status])
+}
+
+model Post {
+  id             String     @id @default(uuid())
+  siteId         String
+  title          String
+  slug           String
+  content        String?    @db.Text
+  excerpt        String?    @db.Text
+  featuredImage  String?
+  categories     String[]
+  tags           String[]
+  seoTitle       String?
+  seoDescription String?
+  status         PageStatus @default(DRAFT)
+  publishedAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, slug])
+  @@index([siteId])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+model Media {
+  id        String   @id @default(uuid())
+  siteId    String
+  filename  String
+  url       String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id                   String             @id @default(uuid())
+  userId               String             @unique
+  plan                 SubscriptionPlan   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeSubscriptionId String?
+  stripeCustomerId     String?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAt             DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+}
+
+model Payment {
+  id                    String        @id @default(uuid())
+  userId                String
+  subscriptionId        String?
+  amount                Decimal
+  currency              String        @default("USD")
+  status                PaymentStatus @default(PENDING)
+  stripePaymentIntentId String?
+  paymentMethod         String?
+  createdAt             DateTime      @default(now())
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  userId    String
+  key       String    @unique
+  name      String?
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Backup {
+  id         String       @id @default(uuid())
+  siteId     String
+  size       BigInt
+  storageUrl String
+  status     BackupStatus @default(IN_PROGRESS)
+  type       BackupType   @default(MANUAL)
+  createdAt  DateTime     @default(now())
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+model Domain {
+  id         String   @id @default(uuid())
+  siteId     String
+  domain     String   @unique
+  verified   Boolean  @default(false)
+  primary    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+model Analytics {
+  id        String   @id @default(uuid())
+  siteId    String
+  date      DateTime @db.Date
+  views     Int      @default(0)
+  visitors  Int      @default(0)
+  sessions  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  // Relations
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, date])
+}
+
+model ActivityLog {
+  id           String   @id @default(uuid())
+  userId       String
+  action       String
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  type      String?  // INFO, SUCCESS, WARNING, ERROR
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Template {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  thumbnail   String?
+  structure   Json     // JSON structure of the template
+  category    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Webhook {
+  id        String   @id @default(uuid())
+  url       String
+  events    String[] // Array of event names
+  isActive  Boolean  @default(true)
+  secret    String?
+  createdAt DateTime @default(now())
+}
+
+model EmailLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  to        String
+  subject   String
+  status    String   // SENT, FAILED
+  error     String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+}
